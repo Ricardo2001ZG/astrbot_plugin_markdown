@@ -117,6 +117,8 @@ class MarkdownRenderer:
                 # executable markup into the page.
                 args=CHROMIUM_ARGS,
             )
+            self._context = await self._browser.new_context(locale="zh-CN")
+            # self._page = await self._browser.new_page()
             self._page = await self._browser.new_page()
             await self._page.set_viewport_size({"width": width, "height": 600})
             self._page.on(
