@@ -1,1 +1,2 @@
 playwright>=1.40.0
+emoji>=2.0.0

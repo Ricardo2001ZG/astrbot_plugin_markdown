@@ -3,6 +3,12 @@
 Intercepts LLM text replies and renders them as high-quality images
 using VS Code's markdown-it ecosystem (markdown-it + KaTeX + highlight.js)
 powered by Playwright headless Chromium.
+
+Features:
+- Mermaid diagram rendering (via CDN-loaded Mermaid.js)
+- Emoji shortcode conversion (:smile: → 😄)
+- Math formulas (KaTeX)
+- Syntax highlighting (highlight.js)
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from astrbot.api.message_components import Image, Plain
 
 from .markdown_detect import should_render
 from .renderer import CHROMIUM_ARGS, MarkdownRenderer
+from .src.handlers import get_emoji_handler, get_mermaid_handler
 
 # Default configuration values (mirrored in _conf_schema.json)
 _DEFAULTS = {
@@ -42,6 +49,11 @@ _DEFAULTS = {
     "katex_escaped_delimiters": True,
     # Engine: highlight.js
     "hljs_ignore_illegals": True,
+    # Extension: Mermaid
+    "mermaid_enabled": True,
+    "mermaid_timeout": 5,
+    # Extension: Emoji
+    "emoji_enabled": True,
 }
 
 
@@ -94,6 +106,9 @@ class Main(star.Star):
         self.renderer = MarkdownRenderer()
         self._playwright_available: bool | None = None
         self._security_warned: set[str] = set()
+        # Handlers for extensions
+        self._emoji_handler = get_emoji_handler()
+        self._mermaid_handler = get_mermaid_handler()
 
     def _get_plugin_config(self):
         """Return the plugin config injected by StarManager.
@@ -170,6 +185,11 @@ class Main(star.Star):
             return
 
         plain_text = "".join(plain_parts)
+
+        # Process emoji shortcodes if enabled
+        emoji_enabled = bool(_cfg_val(config, "emoji_enabled"))
+        if emoji_enabled:
+            plain_text = self._emoji_handler.process_emoji(plain_text)
 
         # Check rendering conditions: markdown detected + length threshold
         char_threshold = int(_cfg_val(config, "char_threshold"))
@@ -281,12 +301,16 @@ class Main(star.Star):
         config.save_config()
         yield event.plain_result(f"Markdown theme set to: {theme}")
 
-    _TEST_MARKDOWN = (
+_TEST_MARKDOWN = (
         "# Markdown Rendering Test\n\n"
         "## Text Formatting\n\n"
         "**Bold**, *italic*, ~~strikethrough~~, `inline code`, "
         "==highlighted==, H~2~O (subscript), x^2^ (superscript).\n\n"
         'Typographic: (tm) (c) (r) "quotes" -- and --- dashes.\n\n'
+        "## Emoji Support\n\n"
+        "Emoji shortcodes are automatically converted: "
+        ":smile: :heart: :fire: :thumbsup: :cat: :rocket: :check: :x:\n\n"
+        "Common emojis: :coffee: :pizza: :cake: :star: :sparkles: :bulb:\n\n"
         "## Code Block\n\n"
         "```python\n"
         "def fibonacci(n: int) -> list[int]:\n"
@@ -298,12 +322,32 @@ class Main(star.Star):
         "        a, b = b, a + b\n"
         "    return seq\n"
         "```\n\n"
+        "## Mermaid Diagram\n\n"
+        "```mermaid\n"
+        "flowchart TD\n"
+        "    A[Start] --> B{Is it working?}\n"
+        "    B -->|Yes| C[Great! :smile:]\n"
+        "    B -->|No| D[Debug]\n"
+        "    D --> B\n"
+        "```\n\n"
+        "## Sequence Diagram\n\n"
+        "```mermaid\n"
+        "sequenceDiagram\n"
+        "    participant User\n"
+        "    participant Plugin\n"
+        "    participant Renderer\n"
+        "    User->>Plugin: Send message\n"
+        "    Plugin->>Renderer: Render markdown\n"
+        "    Renderer-->>Plugin: Return image\n"
+        "    Plugin-->>User: Display image\n"
+        "```\n\n"
         "## Table\n\n"
         "| Feature | Syntax | Renders As |\n"
         "|---------|--------|------------|\n"
         "| Bold | `**text**` | **text** |\n"
         "| Italic | `*text*` | *text* |\n"
-        "| Code | `` `code` `` | `code` |\n\n"
+        "| Code | `` `code` `` | `code` |\n"
+        "| Emoji | `:smile:` | :smile: |\n\n"
         "## Lists\n\n"
         "1. First ordered item\n"
         "   - Nested unordered\n"
@@ -322,13 +366,13 @@ class Main(star.Star):
         "\\int_0^\\infty e^{-x^2} \\, dx = \\frac{\\sqrt{\\pi}}{2}\n"
         "$$\n\n"
         "$$\n"
-        "\\mathbf{A} = \\begin{bmatrix} a_{11} & a_{12} \\\\\\ "
+        "\\mathbf{A} = \\begin{bmatrix} a_{11} & a_{12} \\\\\\\\ "
         "a_{21} & a_{22} \\end{bmatrix}, \\quad "
         "\\det(\\mathbf{A}) = a_{11}a_{22} - a_{12}a_{21}\n"
         "$$\n\n"
         "$$\n"
         "\\begin{aligned}\n"
-        "\\nabla \\cdot \\mathbf{E} &= \\frac{\\rho}{\\varepsilon_0} \\\\\\\n"
+        "\\nabla \\cdot \\mathbf{E} &= \\frac{\\rho}{\\varepsilon_0} \\\\\\\\\n"
         "\\nabla \\times \\mathbf{B} &= \\mu_0 \\mathbf{J} + "
         "\\mu_0 \\varepsilon_0 \\frac{\\partial \\mathbf{E}}"
         "{\\partial t}\n"
@@ -340,7 +384,7 @@ class Main(star.Star):
         "[^1]: A fast, spec-compliant CommonMark parser.\n"
         "[^2]: The fastest math typesetting library for the web.\n\n"
         "---\n\n"
-        "*Test complete — all extensions rendered successfully.*\n"
+        "*Test complete — all extensions rendered successfully.* :rocket:\n"
     )
 
     @filter.command("md_test")
