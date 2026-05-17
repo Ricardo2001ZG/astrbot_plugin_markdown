@@ -6,9 +6,27 @@
   <link rel="stylesheet" href="../dist/katex.min.css">
   <link rel="stylesheet" href="../dist/hljs-github-light.css" id="hljs-theme">
   <link rel="stylesheet" href="../dist/style.css">
+  <!-- Mermaid.js for diagram rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <style>
     /* Prevent any layout shift during rendering */
     html { overflow: hidden; }
+    
+    /* Mermaid diagram styling */
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      margin: 1em 0;
+    }
+    .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+    
+    /* Dark theme for mermaid */
+    [data-theme="dark"] .mermaid {
+      background: transparent;
+    }
   </style>
 </head>
 <body>
@@ -21,6 +39,46 @@
     window.__renderComplete = false;
     let md = null;
     let engineKey = "";
+    let mermaidInitialized = false;
+    let mermaidRenderCount = 0;
+
+    /**
+     * Initialize Mermaid.js with theme-appropriate settings.
+     * @param {string} theme - "light" or "dark"
+     */
+    function initMermaid(theme) {
+      if (typeof mermaid === 'undefined') {
+        console.warn('Mermaid.js not loaded');
+        return false;
+      }
+      
+      if (!mermaidInitialized) {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: theme === 'dark' ? 'dark' : 'default',
+          securityLevel: 'strict',
+          fontFamily: 'inherit',
+          flowchart: {
+            useMaxWidth: true,
+            htmlLabels: true
+          },
+          sequence: {
+            useMaxWidth: true
+          },
+          gantt: {
+            useMaxWidth: true
+          }
+        });
+        mermaidInitialized = true;
+      } else {
+        // Update theme if already initialized
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: theme === 'dark' ? 'dark' : 'default'
+        });
+      }
+      return true;
+    }
 
     /**
      * (Re)initialize the renderer when engine configuration changes.
@@ -37,13 +95,7 @@
     }
 
     /**
-     * Render markdown text into the #content element.
-     * @param {string} text - Raw markdown text
-     * @param {object} [options] - Rendering options
-     * @param {string} [options.theme] - "light" or "dark"
-     * @param {number} [options.fontSize] - Base font size in px
-     * @param {string} [options.footer] - Footer text
-     * @param {object} [options.engine] - Engine options for createRenderer
+     * Wait for fonts and images to load.
      */
     async function waitForStableFonts() {
       if (document.fonts && document.fonts.ready) {
@@ -57,6 +109,72 @@
       });
     }
 
+    /**
+     * Render all mermaid code blocks to SVG diagrams.
+     * @returns {Promise<number>} Number of mermaid diagrams rendered
+     */
+    async function renderMermaidDiagrams() {
+      if (typeof mermaid === 'undefined') {
+        return 0;
+      }
+
+      // Find all mermaid code blocks (pre > code.language-mermaid)
+      const mermaidBlocks = document.querySelectorAll('pre code.language-mermaid, pre code.mermaid');
+      
+      if (mermaidBlocks.length === 0) {
+        return 0;
+      }
+
+      const renderPromises = [];
+      
+      mermaidBlocks.forEach((codeBlock, index) => {
+        const pre = codeBlock.parentElement;
+        const mermaidCode = codeBlock.textContent;
+        const id = `mermaid-${Date.now()}-${index}`;
+        
+        // Create a container for the mermaid diagram
+        const container = document.createElement('div');
+        container.className = 'mermaid';
+        container.id = id;
+        
+        const promise = mermaid.render(id, mermaidCode)
+          .then(({ svg }) => {
+            container.innerHTML = svg;
+            // Replace the pre block with the rendered diagram
+            pre.replaceWith(container);
+          })
+          .catch((err) => {
+            console.warn('Mermaid render error:', err);
+            // Keep the code block visible on error
+            container.innerHTML = `<pre class="mermaid-error">${escapeHtml(mermaidCode)}</pre>`;
+            pre.replaceWith(container);
+          });
+        
+        renderPromises.push(promise);
+      });
+
+      await Promise.all(renderPromises);
+      return mermaidBlocks.length;
+    }
+
+    /**
+     * Escape HTML for error display.
+     */
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    /**
+     * Render markdown text into the #content element.
+     * @param {string} text - Raw markdown text
+     * @param {object} [options] - Rendering options
+     * @param {string} [options.theme] - "light" or "dark"
+     * @param {number} [options.fontSize] - Base font size in px
+     * @param {string} [options.footer] - Footer text
+     * @param {object} [options.engine] - Engine options for createRenderer
+     */
     async function renderMarkdown(text, options = {}) {
       window.__renderComplete = false;
 
@@ -75,6 +193,9 @@
           hljsLink.href = "../dist/hljs-github-light.css";
         }
 
+        // Initialize mermaid with appropriate theme
+        initMermaid(theme);
+
         // Apply font size
         if (options.fontSize) {
           document.documentElement.style.fontSize = options.fontSize + "px";
@@ -83,6 +204,9 @@
         // Render markdown and sanitize to prevent XSS
         const html = md.render(text);
         document.getElementById("content").innerHTML = MarkdownBundle.sanitizeHtml(html);
+
+        // Render mermaid diagrams (async)
+        await renderMermaidDiagrams();
 
         // Footer
         const footerEl = document.getElementById("footer");
